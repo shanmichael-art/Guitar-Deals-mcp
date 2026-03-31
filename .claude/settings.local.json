@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(find . -not -path */node_modules/* -type f -o -type d)",
+      "Bash(npx tsc:*)",
+      "Bash(npx tsx:*)",
+      "Bash(cd:*)",
+      "Bash(node dist/runFullScan.js)"
+    ]
+  }
+}
