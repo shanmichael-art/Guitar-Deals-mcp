@@ -2,45 +2,42 @@ import { z } from "zod";
 import { getPage } from "../lib/browser.js";
 export const ScanDealsMarketplaceSchema = z.object({
     marketplaceUrl: z.string().url(),
-    maxListings: z.number().int().min(1).max(100).default(25)
+    maxListings: z.number().int().min(1).max(2000).default(25)
 });
-export async function scanDealsMarketplace(args) {
-    const page = await getPage();
-    await page.goto(args.marketplaceUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000
-    });
-    // Let JS hydrate the page
-    await page.waitForTimeout(5000);
-    // Scroll incrementally to load all lazy-loaded listings
-    const scrollsNeeded = Math.ceil(args.maxListings / 4); // ~4 listings per viewport
-    for (let i = 0; i < scrollsNeeded; i++) {
+// Extract all listing cards visible on the current page DOM
+async function extractListingsFromPage(page, seenUrls, maxListings) {
+    // Scroll through the page to trigger lazy-load
+    let lastCount = 0;
+    let stallRounds = 0;
+    while (stallRounds < 5) {
+        const currentCount = await page.evaluate(() => new Set(Array.from(document.querySelectorAll('a[href*="/item/"]'))
+            .map(a => a.href.split("?")[0])).size);
+        if (currentCount === lastCount) {
+            stallRounds++;
+        }
+        else {
+            stallRounds = 0;
+            lastCount = currentCount;
+        }
         await page.evaluate(() => window.scrollBy(0, 1200));
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(700);
     }
-    await page.waitForTimeout(1500);
-    // Wait for at least one listing link to appear
-    await page.waitForFunction(() => {
-        return document.querySelectorAll('a[href*="/item/"]').length > 0;
-    }, { timeout: 20000 }).catch(() => null);
-    const listings = await page.evaluate((maxListings) => {
+    await page.waitForTimeout(1000);
+    return (await page.evaluate(([seenArr, max]) => {
+        const seen = new Set(seenArr);
         const anchors = Array.from(document.querySelectorAll('a[href*="/item/"]'));
-        // Deduplicate by base URL (strip tracking params) — each card has 2 anchors (image + title)
-        // and Reverb sometimes appends ?bk=... tracking tokens to some anchors
-        const seenHrefs = new Set();
         const uniqueAnchors = [];
         for (const a of anchors) {
             if (!a.href || !(/\/item\//.test(a.href)))
                 continue;
             const baseHref = a.href.split("?")[0];
-            if (seenHrefs.has(baseHref))
+            if (seen.has(baseHref))
                 continue;
-            seenHrefs.add(baseHref);
+            seen.add(baseHref);
             uniqueAnchors.push(a);
         }
         const results = [];
         for (const a of uniqueAnchors) {
-            // Find the listing card: prefer <li>, then <article>, then walk up looking for a card-sized container
             const container = a.closest("li") ??
                 a.closest("article") ??
                 (() => {
@@ -55,13 +52,11 @@ export async function scanDealsMarketplace(args) {
                     }
                     return el;
                 })();
-            // Use Reverb's specific CSS classes for reliable extraction
             const titleEl = container.querySelector(".rc-listing-card__title") ??
                 container.querySelector("h2, h3, h4");
             const title = titleEl?.textContent?.trim() ?? "";
             if (!title || title.length < 3)
                 continue;
-            // Price: use the dedicated price element, fall back to first dollar in text
             const priceEl = container.querySelector(".rc-price-block__price");
             const priceText = priceEl?.textContent?.trim() ?? "";
             const price = priceText
@@ -72,34 +67,63 @@ export async function scanDealsMarketplace(args) {
                 })();
             if (!price || price <= 0)
                 continue;
-            // Condition: "Used – Excellent" → "Excellent", "Mint" → "Mint"
             const condEl = container.querySelector(".rc-listing-card__condition");
             const condText = condEl?.textContent?.trim() ?? "";
-            // Prefer the grade after the em-dash (e.g. "Used – Excellent" → "Excellent")
             const condition = condText.match(/[–\-]\s*(Mint|Excellent|Very Good|Good|Fair)/i)?.[1] ??
                 condText.match(/^(Mint|Excellent|Very Good|Good|Fair)/i)?.[1] ??
                 null;
-            // Shipping: NOT present in marketplace card DOM — will be fetched by analyzeListing
-            const shipping = 0;
-            // Offers proxy: parse "In 4 Other Carts" → 4, or null
             const nudgeLabels = Array.from(container.querySelectorAll(".rc-nudge__icon__label")).map(el => el.textContent?.trim() ?? "");
             const cartsMatch = nudgeLabels.join(" ").match(/In\s+(\d+)\s+Other\s+Cart/i);
-            const offers = cartsMatch ? Number(cartsMatch[1]) : null;
             results.push({
                 title,
                 url: a.href.split("?")[0],
                 price,
-                shipping,
+                shipping: 0,
                 condition,
                 watchers: null,
-                offers,
+                offers: cartsMatch ? Number(cartsMatch[1]) : null,
                 listedAgeText: null
             });
-            if (results.length >= maxListings)
+            if (results.length >= max)
                 break;
         }
         return results;
-    }, args.maxListings);
+    }, [Array.from(seenUrls), maxListings]));
+}
+export async function scanDealsMarketplace(args) {
+    const page = await getPage();
+    const seenUrls = new Set();
+    const allListings = [];
+    let pageNum = 1;
+    while (allListings.length < args.maxListings) {
+        // Reverb paginates via &page=N
+        const separator = args.marketplaceUrl.includes("?") ? "&" : "?";
+        const pageUrl = `${args.marketplaceUrl}${separator}page=${pageNum}`;
+        console.log(`  📄 Scanning page ${pageNum} (${allListings.length} listings so far)...`);
+        await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForTimeout(4000);
+        // Check for listing links before proceeding
+        const hasListings = await page.waitForFunction(() => document.querySelectorAll('a[href*="/item/"]').length > 0, { timeout: 15000 }).catch(() => null);
+        if (!hasListings) {
+            console.log(`  📄 No listings found on page ${pageNum} — stopping.`);
+            break;
+        }
+        const countBefore = allListings.length;
+        const pageListings = await extractListingsFromPage(page, seenUrls, args.maxListings - allListings.length);
+        if (pageListings.length === 0) {
+            console.log(`  📄 Page ${pageNum} returned no new listings — stopping.`);
+            break;
+        }
+        // Track seen URLs and accumulate
+        for (const listing of pageListings) {
+            seenUrls.add(listing.url);
+            allListings.push(listing);
+        }
+        console.log(`  📄 Page ${pageNum}: +${allListings.length - countBefore} listings`);
+        pageNum++;
+        // Small pause between page navigations
+        await page.waitForTimeout(1500);
+    }
     await page.close();
-    return listings;
+    return allListings;
 }

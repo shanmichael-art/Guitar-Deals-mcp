@@ -16,7 +16,7 @@ import type { ListingCard, ListingAnalysis, ModelMarketData, DealScore } from ".
 const MARKETPLACE_URL =
   "https://reverb.com/marketplace?query=electric%20guitar&deals_and_steals=true&condition[]=mint&condition[]=excellent&condition[]=very-good&condition[]=good&condition[]=used&condition[]=fair&product_type=electric-guitars&accepts_offers=true&make[]=fender&make[]=gibson&make[]=epiphone&make[]=prs&make[]=ibanez&make[]=squier&make[]=gretsch&make[]=jackson&make[]=schecter&make[]=esp-ltd&make[]=rickenbacker&make[]=suhr&make[]=d-angelico&make[]=danelectro&make[]=charvel&make[]=godin&exclude_local_pickup_only=true";
 
-const MAX_LISTINGS = 48;  // ~2 Reverb pages
+const MAX_LISTINGS = 500; // all available results
 const CONCURRENCY  = 3;   // parallel listing analyses (be kind to Reverb)
 
 interface ScoredResult {
