@@ -5,12 +5,14 @@
  * a sorted shortlist.
  */
 
+import "dotenv/config";
 import { writeFileSync } from "fs";
 import { scanDealsMarketplace } from "./tools/scanDealsMarketplace.js";
 import { analyzeListing } from "./tools/analyzeListing.js";
 import { getModelMarketData } from "./tools/getModelMarketData.js";
 import { scoreDeal } from "./tools/scoreDeal.js";
 import { closeBrowser } from "./lib/browser.js";
+import { isCompleteGuitar } from "./lib/guitarCheck.js";
 import type { ListingCard, ListingAnalysis, ModelMarketData, DealScore } from "./types.js";
 
 const MARKETPLACE_URL =
@@ -88,6 +90,8 @@ function printResult(r: ScoredResult, rank: number) {
 
 // ── pipeline ─────────────────────────────────────────────────────────────────
 
+let partsSkipped = 0;
+
 async function processListing(
   card: ListingCard,
   idx: number,
@@ -101,6 +105,14 @@ async function processListing(
 
     if (!analysis.askPrice) {
       console.error(`${tag} Skipped — no ask price`);
+      return null;
+    }
+
+    // ── AI parts check ──
+    const guitarCheck = await isCompleteGuitar(analysis.rawTitle, analysis.description);
+    if (!guitarCheck.isComplete) {
+      console.log(`${tag} Skipped — not a complete guitar: ${guitarCheck.reason}`);
+      partsSkipped++;
       return null;
     }
 
@@ -208,6 +220,7 @@ async function main() {
   console.log(`\n\n${"═".repeat(55)}`);
   console.log(`  RESULTS: ${sorted.length} deals scored`);
   console.log(`  🟢 Strong: ${counts.strong}  🟡 Promising: ${counts.promising}  🔵 Watch: ${counts.watch}  🔴 Pass: ${counts.pass}`);
+  console.log(`  🔩 Parts/incomplete skipped: ${partsSkipped}`);
   console.log(`${"═".repeat(55)}`);
 
   sorted.forEach((r, i) => printResult(r, i + 1));
@@ -372,6 +385,7 @@ async function main() {
     .badge-promising { background: #fef9c3; color: #a16207; }
     .badge-watch     { background: #dbeafe; color: #1d4ed8; }
     .badge-pass      { background: #fee2e2; color: #b91c1c; }
+    .badge-parts     { background: #f1f5f9; color: #475569; }
     .card { border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
     .card-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .rank { font-size: 0.85rem; color: #94a3b8; font-weight: 600; min-width: 30px; }
@@ -402,6 +416,7 @@ async function main() {
     <span class="badge badge-promising">🟡 Promising: ${counts.promising}</span>
     <span class="badge badge-watch">🔵 Watch: ${counts.watch}</span>
     <span class="badge badge-pass">🔴 Pass: ${counts.pass}</span>
+    <span class="badge badge-parts">🔩 Parts skipped: ${partsSkipped}</span>
   </div>
   <div class="filter-bar">
     <button class="filter-btn active" onclick="filter('all')">All</button>

@@ -6,7 +6,10 @@
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
       "Bash(cd:*)",
-      "Bash(node dist/runFullScan.js)"
+      "Bash(node dist/runFullScan.js)",
+      "Bash(npm install:*)",
+      "Bash([ ! -f .env ])",
+      "Bash(node -e ':*)"
     ]
   }
 }
