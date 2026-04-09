@@ -9,7 +9,11 @@ async function main() {
     maxListings: 10
   });
 
+  console.log("FINAL RESULTS:");
   console.log(JSON.stringify(results, null, 2));
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error("TEST SCAN FAILED:", err);
+  process.exit(1);
+});
